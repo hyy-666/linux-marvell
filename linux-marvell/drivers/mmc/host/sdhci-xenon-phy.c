@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * PHY support for Xenon SDHC
  *
@@ -5,16 +6,11 @@
  *
  * Author:	Hu Ziji <huziji@marvell.com>
  * Date:	2016-8-24
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation version 2.
  */
 
 #include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/ktime.h>
-#include <linux/mv_soc_info.h>
 #include <linux/of_address.h>
 
 #include "sdhci-pltfm.h"
@@ -358,9 +354,13 @@ static int xenon_emmc_phy_enable_dll(struct sdhci_host *host)
 
 	/* Wait max 32 ms */
 	timeout = ktime_add_ms(ktime_get(), 32);
-	while (!(sdhci_readw(host, XENON_SLOT_EXT_PRESENT_STATE) &
-		XENON_DLL_LOCK_STATE)) {
-		if (ktime_after(ktime_get(), timeout)) {
+	while (1) {
+		bool timedout = ktime_after(ktime_get(), timeout);
+
+		if (sdhci_readw(host, XENON_SLOT_EXT_PRESENT_STATE) &
+		    XENON_DLL_LOCK_STATE)
+			break;
+		if (timedout) {
 			dev_err(mmc_dev(host->mmc), "Wait for DLL Lock time-out\n");
 			return -ETIMEDOUT;
 		}
@@ -527,7 +527,7 @@ static bool xenon_emmc_phy_slow_mode(struct sdhci_host *host,
 			ret = true;
 			break;
 		}
-		/* else: fall through */
+		fallthrough;
 	default:
 		reg &= ~XENON_TIMING_ADJUST_SLOW_MODE;
 		ret = false;
@@ -661,8 +661,8 @@ static int get_dt_pad_ctrl_data(struct sdhci_host *host,
 		return 0;
 
 	if (of_address_to_resource(np, 1, &iomem)) {
-		dev_err(mmc_dev(host->mmc), "Unable to find SoC PAD ctrl register address for %s\n",
-			np->name);
+		dev_err(mmc_dev(host->mmc), "Unable to find SoC PAD ctrl register address for %pOFn\n",
+			np);
 		return -EINVAL;
 	}
 
@@ -696,12 +696,7 @@ static int xenon_emmc_phy_parse_param_dt(struct sdhci_host *host,
 	u32 value;
 
 	params->slow_mode = false;
-	/* Activate slow mode unconditionally for AP806 A0 and A1, but not B0.
-	 * For any revision honor the explicit request for the slow mode
-	 */
-	if ((of_device_is_compatible(np, "marvell,armada-ap806-sdhci") &&
-	    mv_soc_info_get_ap_revision() < APN806_REV_ID_B0) ||
-	    of_property_read_bool(np, "marvell,xenon-phy-slow-mode"))
+	if (of_property_read_bool(np, "marvell,xenon-phy-slow-mode"))
 		params->slow_mode = true;
 
 	params->znr = XENON_ZNR_DEF_VALUE;

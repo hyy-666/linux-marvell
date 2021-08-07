@@ -117,8 +117,9 @@ static struct ehci_tt *find_tt(struct usb_device *udev)
 	if (utt->multi) {
 		tt_index = utt->hcpriv;
 		if (!tt_index) {		/* Create the index array */
-			tt_index = kzalloc(utt->hub->maxchild *
-					sizeof(*tt_index), GFP_ATOMIC);
+			tt_index = kcalloc(utt->hub->maxchild,
+					   sizeof(*tt_index),
+					   GFP_ATOMIC);
 			if (!tt_index)
 				return ERR_PTR(-ENOMEM);
 			utt->hcpriv = tt_index;
@@ -305,26 +306,6 @@ static int __maybe_unused same_tt(struct usb_device *dev1,
 }
 
 #ifdef CONFIG_USB_EHCI_TT_NEWSCHED
-
-/* Which uframe does the low/fullspeed transfer start in?
- *
- * The parameter is the mask of ssplits in "H-frame" terms
- * and this returns the transfer start uframe in "B-frame" terms,
- * which allows both to match, e.g. a ssplit in "H-frame" uframe 0
- * will cause a transfer in "B-frame" uframe 0.  "B-frames" lag
- * "H-frames" by 1 uframe.  See the EHCI spec sec 4.5 and figure 4.7.
- */
-static inline unsigned char tt_start_uframe(struct ehci_hcd *ehci, __hc32 mask)
-{
-	unsigned char smask = hc32_to_cpu(ehci, mask) & QH_SMASK;
-
-	if (!smask) {
-		ehci_err(ehci, "invalid empty smask!\n");
-		/* uframe 7 can't have bw so this will indicate failure */
-		return 7;
-	}
-	return ffs(smask) - 1;
-}
 
 static const unsigned char
 max_tt_usecs[] = { 125, 125, 125, 125, 125, 125, 30, 0 };
@@ -1834,7 +1815,6 @@ static bool itd_complete(struct ehci_hcd *ehci, struct ehci_itd *itd)
 	unsigned				uframe;
 	int					urb_index = -1;
 	struct ehci_iso_stream			*stream = itd->stream;
-	struct usb_device			*dev;
 	bool					retval = false;
 
 	/* for each uframe with a packet */
@@ -1885,7 +1865,6 @@ static bool itd_complete(struct ehci_hcd *ehci, struct ehci_itd *itd)
 	 */
 
 	/* give urb back to the driver; completion often (re)submits */
-	dev = urb->dev;
 	ehci_urb_done(ehci, urb, 0);
 	retval = true;
 	urb = NULL;
@@ -2229,7 +2208,6 @@ static bool sitd_complete(struct ehci_hcd *ehci, struct ehci_sitd *sitd)
 	u32					t;
 	int					urb_index;
 	struct ehci_iso_stream			*stream = sitd->stream;
-	struct usb_device			*dev;
 	bool					retval = false;
 
 	urb_index = sitd->index;
@@ -2267,7 +2245,6 @@ static bool sitd_complete(struct ehci_hcd *ehci, struct ehci_sitd *sitd)
 	 */
 
 	/* give urb back to the driver; completion often (re)submits */
-	dev = urb->dev;
 	ehci_urb_done(ehci, urb, 0);
 	retval = true;
 	urb = NULL;
@@ -2478,7 +2455,7 @@ restart:
 			ehci_dbg(ehci, "corrupt type %d frame %d shadow %p\n",
 					type, frame, q.ptr);
 			/* BUG(); */
-			/* FALL THROUGH */
+			fallthrough;
 		case Q_TYPE_QH:
 		case Q_TYPE_FSTN:
 			/* End of the iTDs and siTDs */

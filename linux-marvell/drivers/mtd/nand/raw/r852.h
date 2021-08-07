@@ -1,10 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright © 2009 - Maxim Levitsky
  * driver for Ricoh xD readers
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/pci.h>
@@ -107,6 +104,7 @@
 #define DMA_MEMORY	1
 
 struct r852_device {
+	struct nand_controller		controller;
 	void __iomem *mmio;		/* mmio */
 	struct nand_chip *chip;		/* nand chip backpointer */
 	struct pci_dev *pci_dev;	/* pci backpointer */
@@ -129,7 +127,7 @@ struct r852_device {
 	/* card status area */
 	struct delayed_work card_detect_work;
 	struct workqueue_struct *card_workqueue;
-	int card_registred;		/* card registered with mtd */
+	int card_registered;		/* card registered with mtd */
 	int card_detected;		/* card detected in slot */
 	int card_unstable;		/* whenever the card is inserted,
 					   is not known yet */
@@ -144,17 +142,14 @@ struct r852_device {
 	uint8_t ctlreg;			/* cached contents of control reg */
 };
 
-#define DRV_NAME "r852"
-
-
 #define dbg(format, ...) \
 	if (debug) \
-		printk(KERN_DEBUG DRV_NAME ": " format "\n", ## __VA_ARGS__)
+		pr_debug(format "\n", ## __VA_ARGS__)
 
 #define dbg_verbose(format, ...) \
 	if (debug > 1) \
-		printk(KERN_DEBUG DRV_NAME ": " format "\n", ## __VA_ARGS__)
+		pr_debug(format "\n", ## __VA_ARGS__)
 
 
 #define message(format, ...) \
-	printk(KERN_INFO DRV_NAME ": " format "\n", ## __VA_ARGS__)
+	pr_info(format "\n", ## __VA_ARGS__)

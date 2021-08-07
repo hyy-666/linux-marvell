@@ -6,7 +6,7 @@ CUR_DIR := $(shell pwd)
 STAGE_DIR := $(CUR_DIR)/stage
 OUTPUT_DIR := $(CUR_DIR)/output
 
-MAKE_ARCH := make -C $(KDIR) CROSS_COMPILE=aarch64-linux-gnu- ARCH=arm64
+MAKE_ARCH := make -C $(KDIR) CROSS_COMPILE=aarch64-none-linux-gnu- ARCH=arm64
 J=$(shell grep ^processor /proc/cpuinfo | wc -l)
 
 all: kernel modules
@@ -35,3 +35,6 @@ kernel_clean:
 clean: kernel_clean
 	rm -rf $(STAGE_DIR)
 	rm -rf $(OUTPUT_DIR)/*
+
+menuconfig:
+	$(MAKE_ARCH) menuconfig

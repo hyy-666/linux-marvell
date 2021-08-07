@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright 2017 ATMEL
  * Copyright 2017 Free Electrons
@@ -9,10 +10,10 @@
  *
  *   Copyright 2003 Rick Bronson
  *
- *   Derived from drivers/mtd/nand/autcpu12.c
+ *   Derived from drivers/mtd/nand/autcpu12.c (removed in v3.8)
  *	Copyright 2001 Thomas Gleixner (gleixner@autronix.de)
  *
- *   Derived from drivers/mtd/spia.c
+ *   Derived from drivers/mtd/spia.c (removed in v3.8)
  *	Copyright 2000 Steven J. Hill (sjhill@cotw.com)
  *
  *   Add Hardware ECC support for AT91SAM9260 / AT91SAM9263
@@ -27,10 +28,6 @@
  *
  *   Add Nand Flash Controller support for SAMA5 SoC
  *	Copyright 2013 ATMEL, Josh Wu (josh.wu@atmel.com)
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  *
  * The PMECC is an hardware assisted BCH engine, which means part of the
  * ECC algorithm is left to the software. The hardware/software repartition
@@ -765,6 +762,13 @@ void atmel_pmecc_get_generated_eccbytes(struct atmel_pmecc_user *user,
 }
 EXPORT_SYMBOL_GPL(atmel_pmecc_get_generated_eccbytes);
 
+void atmel_pmecc_reset(struct atmel_pmecc *pmecc)
+{
+	writel(PMECC_CTRL_RST, pmecc->regs.base + ATMEL_PMECC_CTRL);
+	writel(PMECC_CTRL_DISABLE, pmecc->regs.base + ATMEL_PMECC_CTRL);
+}
+EXPORT_SYMBOL_GPL(atmel_pmecc_reset);
+
 int atmel_pmecc_enable(struct atmel_pmecc_user *user, int op)
 {
 	struct atmel_pmecc *pmecc = user->pmecc;
@@ -797,10 +801,7 @@ EXPORT_SYMBOL_GPL(atmel_pmecc_enable);
 
 void atmel_pmecc_disable(struct atmel_pmecc_user *user)
 {
-	struct atmel_pmecc *pmecc = user->pmecc;
-
-	writel(PMECC_CTRL_RST, pmecc->regs.base + ATMEL_PMECC_CTRL);
-	writel(PMECC_CTRL_DISABLE, pmecc->regs.base + ATMEL_PMECC_CTRL);
+	atmel_pmecc_reset(user->pmecc);
 	mutex_unlock(&user->pmecc->lock);
 }
 EXPORT_SYMBOL_GPL(atmel_pmecc_disable);
@@ -855,10 +856,7 @@ static struct atmel_pmecc *atmel_pmecc_create(struct platform_device *pdev,
 
 	/* Disable all interrupts before registering the PMECC handler. */
 	writel(0xffffffff, pmecc->regs.base + ATMEL_PMECC_IDR);
-
-	/* Reset the ECC engine */
-	writel(PMECC_CTRL_RST, pmecc->regs.base + ATMEL_PMECC_CTRL);
-	writel(PMECC_CTRL_DISABLE, pmecc->regs.base + ATMEL_PMECC_CTRL);
+	atmel_pmecc_reset(pmecc);
 
 	return pmecc;
 }
@@ -875,23 +873,32 @@ static struct atmel_pmecc *atmel_pmecc_get_by_node(struct device *userdev,
 {
 	struct platform_device *pdev;
 	struct atmel_pmecc *pmecc, **ptr;
+	int ret;
 
 	pdev = of_find_device_by_node(np);
-	if (!pdev || !platform_get_drvdata(pdev))
+	if (!pdev)
 		return ERR_PTR(-EPROBE_DEFER);
+	pmecc = platform_get_drvdata(pdev);
+	if (!pmecc) {
+		ret = -EPROBE_DEFER;
+		goto err_put_device;
+	}
 
 	ptr = devres_alloc(devm_atmel_pmecc_put, sizeof(*ptr), GFP_KERNEL);
-	if (!ptr)
-		return ERR_PTR(-ENOMEM);
-
-	get_device(&pdev->dev);
-	pmecc = platform_get_drvdata(pdev);
+	if (!ptr) {
+		ret = -ENOMEM;
+		goto err_put_device;
+	}
 
 	*ptr = pmecc;
 
 	devres_add(userdev, ptr);
 
 	return pmecc;
+
+err_put_device:
+	put_device(&pdev->dev);
+	return ERR_PTR(ret);
 }
 
 static const int atmel_pmecc_strengths[] = { 2, 4, 8, 12, 24, 32 };
