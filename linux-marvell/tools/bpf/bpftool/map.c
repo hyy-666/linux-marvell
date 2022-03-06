@@ -17,6 +17,7 @@
 
 #include <bpf/bpf.h>
 #include <bpf/btf.h>
+#include <bpf/hashmap.h>
 
 #include "json_writer.h"
 #include "main.h"
@@ -51,9 +52,12 @@ const char * const map_type_name[] = {
 	[BPF_MAP_TYPE_STRUCT_OPS]		= "struct_ops",
 	[BPF_MAP_TYPE_RINGBUF]			= "ringbuf",
 	[BPF_MAP_TYPE_INODE_STORAGE]		= "inode_storage",
+	[BPF_MAP_TYPE_TASK_STORAGE]		= "task_storage",
 };
 
 const size_t map_type_name_size = ARRAY_SIZE(map_type_name);
+
+static struct hashmap *map_table;
 
 static bool map_is_per_cpu(__u32 type)
 {
@@ -534,19 +538,18 @@ static int show_map_close_json(int fd, struct bpf_map_info *info)
 	if (info->btf_id)
 		jsonw_int_field(json_wtr, "btf_id", info->btf_id);
 
-	if (!hash_empty(map_table.table)) {
-		struct pinned_obj *obj;
+	if (!hashmap__empty(map_table)) {
+		struct hashmap_entry *entry;
 
 		jsonw_name(json_wtr, "pinned");
 		jsonw_start_array(json_wtr);
-		hash_for_each_possible(map_table.table, obj, hash, info->id) {
-			if (obj->id == info->id)
-				jsonw_string(json_wtr, obj->path);
-		}
+		hashmap__for_each_key_entry(map_table, entry,
+					    u32_as_hash_field(info->id))
+			jsonw_string(json_wtr, entry->value);
 		jsonw_end_array(json_wtr);
 	}
 
-	emit_obj_refs_json(&refs_table, info->id, json_wtr);
+	emit_obj_refs_json(refs_table, info->id, json_wtr);
 
 	jsonw_end_object(json_wtr);
 
@@ -609,13 +612,12 @@ static int show_map_close_plain(int fd, struct bpf_map_info *info)
 	}
 	close(fd);
 
-	if (!hash_empty(map_table.table)) {
-		struct pinned_obj *obj;
+	if (!hashmap__empty(map_table)) {
+		struct hashmap_entry *entry;
 
-		hash_for_each_possible(map_table.table, obj, hash, info->id) {
-			if (obj->id == info->id)
-				printf("\n\tpinned %s", obj->path);
-		}
+		hashmap__for_each_key_entry(map_table, entry,
+					    u32_as_hash_field(info->id))
+			printf("\n\tpinned %s", (char *)entry->value);
 	}
 	printf("\n");
 
@@ -635,7 +637,7 @@ static int show_map_close_plain(int fd, struct bpf_map_info *info)
 	if (frozen)
 		printf("%sfrozen", info->btf_id ? "  " : "");
 
-	emit_obj_refs_plain(&refs_table, info->id, "\n\tpids ");
+	emit_obj_refs_plain(refs_table, info->id, "\n\tpids ");
 
 	printf("\n");
 	return 0;
@@ -693,8 +695,15 @@ static int do_show(int argc, char **argv)
 	int err;
 	int fd;
 
-	if (show_pinned)
-		build_pinned_obj_table(&map_table, BPF_OBJ_MAP);
+	if (show_pinned) {
+		map_table = hashmap__new(hash_fn_for_key_as_id,
+					 equal_fn_for_key_as_id, NULL);
+		if (!map_table) {
+			p_err("failed to create hashmap for pinned paths");
+			return -1;
+		}
+		build_pinned_obj_table(map_table, BPF_OBJ_MAP);
+	}
 	build_obj_refs_table(&refs_table, BPF_OBJ_MAP);
 
 	if (argc == 2)
@@ -739,7 +748,10 @@ static int do_show(int argc, char **argv)
 	if (json_output)
 		jsonw_end_array(json_wtr);
 
-	delete_obj_refs_table(&refs_table);
+	delete_obj_refs_table(refs_table);
+
+	if (show_pinned)
+		delete_pinned_obj_table(map_table);
 
 	return errno == ENOENT ? 0 : -1;
 }
@@ -806,10 +818,11 @@ static struct btf *get_map_kv_btf(const struct bpf_map_info *info)
 	} else if (info->btf_value_type_id) {
 		int err;
 
-		err = btf__get_from_id(info->btf_id, &btf);
-		if (err || !btf) {
+		btf = btf__load_from_kernel_by_id(info->btf_id);
+		err = libbpf_get_error(btf);
+		if (err) {
 			p_err("failed to get btf");
-			btf = err ? ERR_PTR(err) : ERR_PTR(-ESRCH);
+			btf = ERR_PTR(err);
 		}
 	}
 
@@ -1038,11 +1051,10 @@ static void print_key_value(struct bpf_map_info *info, void *key,
 			    void *value)
 {
 	json_writer_t *btf_wtr;
-	struct btf *btf = NULL;
-	int err;
+	struct btf *btf;
 
-	err = btf__get_from_id(info->btf_id, &btf);
-	if (err) {
+	btf = btf__load_from_kernel_by_id(info->btf_id);
+	if (libbpf_get_error(btf)) {
 		p_err("failed to get btf");
 		return;
 	}
@@ -1464,8 +1476,10 @@ static int do_help(int argc, char **argv)
 		"                 lru_percpu_hash | lpm_trie | array_of_maps | hash_of_maps |\n"
 		"                 devmap | devmap_hash | sockmap | cpumap | xskmap | sockhash |\n"
 		"                 cgroup_storage | reuseport_sockarray | percpu_cgroup_storage |\n"
-		"                 queue | stack | sk_storage | struct_ops | ringbuf | inode_storage }\n"
-		"       " HELP_SPEC_OPTIONS "\n"
+		"                 queue | stack | sk_storage | struct_ops | ringbuf | inode_storage |\n"
+		"                 task_storage }\n"
+		"       " HELP_SPEC_OPTIONS " |\n"
+		"                    {-f|--bpffs} | {-n|--nomount} }\n"
 		"",
 		bin_name, argv[-2]);
 

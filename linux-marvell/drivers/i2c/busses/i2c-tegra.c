@@ -550,7 +550,7 @@ static int tegra_i2c_poll_register(struct tegra_i2c_dev *i2c_dev,
 	void __iomem *addr = i2c_dev->base + tegra_i2c_reg_addr(i2c_dev, reg);
 	u32 val;
 
-	if (!i2c_dev->atomic_mode && !in_irq())
+	if (!i2c_dev->atomic_mode)
 		return readl_relaxed_poll_timeout(addr, val, !(val & mask),
 						  delay_us, timeout_us);
 
@@ -1700,7 +1700,7 @@ static int tegra_i2c_init_hardware(struct tegra_i2c_dev *i2c_dev)
 	else
 		ret = tegra_i2c_init(i2c_dev);
 
-	pm_runtime_put(i2c_dev->dev);
+	pm_runtime_put_sync(i2c_dev->dev);
 
 	return ret;
 }
@@ -1739,9 +1739,10 @@ static int tegra_i2c_probe(struct platform_device *pdev)
 	/* interrupt will be enabled during of transfer time */
 	irq_set_status_flags(i2c_dev->irq, IRQ_NOAUTOEN);
 
-	err = devm_request_irq(i2c_dev->dev, i2c_dev->irq, tegra_i2c_isr,
-			       IRQF_NO_SUSPEND, dev_name(i2c_dev->dev),
-			       i2c_dev);
+	err = devm_request_threaded_irq(i2c_dev->dev, i2c_dev->irq,
+					NULL, tegra_i2c_isr,
+					IRQF_NO_SUSPEND | IRQF_ONESHOT,
+					dev_name(i2c_dev->dev), i2c_dev);
 	if (err)
 		return err;
 
@@ -1818,7 +1819,7 @@ static int tegra_i2c_remove(struct platform_device *pdev)
 	struct tegra_i2c_dev *i2c_dev = platform_get_drvdata(pdev);
 
 	i2c_del_adapter(&i2c_dev->adapter);
-	pm_runtime_disable(i2c_dev->dev);
+	pm_runtime_force_suspend(i2c_dev->dev);
 
 	tegra_i2c_release_dma(i2c_dev);
 	tegra_i2c_release_clocks(i2c_dev);

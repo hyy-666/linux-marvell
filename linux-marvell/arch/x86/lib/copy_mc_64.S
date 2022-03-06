@@ -2,14 +2,11 @@
 /* Copyright(c) 2016-2020 Intel Corporation. All rights reserved. */
 
 #include <linux/linkage.h>
-#include <asm/copy_mc_test.h>
-#include <asm/export.h>
 #include <asm/asm.h>
 
 #ifndef CONFIG_UML
 
 #ifdef CONFIG_X86_MCE
-COPY_MC_TEST_CTL
 
 /*
  * copy_mc_fragile - copy memory with indication if an exception / fault happened
@@ -38,8 +35,6 @@ SYM_FUNC_START(copy_mc_fragile)
 	subl %ecx, %edx
 .L_read_leading_bytes:
 	movb (%rsi), %al
-	COPY_MC_TEST_SRC %rsi 1 .E_leading_bytes
-	COPY_MC_TEST_DST %rdi 1 .E_leading_bytes
 .L_write_leading_bytes:
 	movb %al, (%rdi)
 	incq %rsi
@@ -55,8 +50,6 @@ SYM_FUNC_START(copy_mc_fragile)
 
 .L_read_words:
 	movq (%rsi), %r8
-	COPY_MC_TEST_SRC %rsi 8 .E_read_words
-	COPY_MC_TEST_DST %rdi 8 .E_write_words
 .L_write_words:
 	movq %r8, (%rdi)
 	addq $8, %rsi
@@ -73,8 +66,6 @@ SYM_FUNC_START(copy_mc_fragile)
 	movl %edx, %ecx
 .L_read_trailing_bytes:
 	movb (%rsi), %al
-	COPY_MC_TEST_SRC %rsi 1 .E_trailing_bytes
-	COPY_MC_TEST_DST %rdi 1 .E_trailing_bytes
 .L_write_trailing_bytes:
 	movb %al, (%rdi)
 	incq %rsi
@@ -88,7 +79,6 @@ SYM_FUNC_START(copy_mc_fragile)
 .L_done:
 	ret
 SYM_FUNC_END(copy_mc_fragile)
-EXPORT_SYMBOL_GPL(copy_mc_fragile)
 
 	.section .fixup, "ax"
 	/*
@@ -117,9 +107,9 @@ EXPORT_SYMBOL_GPL(copy_mc_fragile)
 
 	.previous
 
-	_ASM_EXTABLE_FAULT(.L_read_leading_bytes, .E_leading_bytes)
-	_ASM_EXTABLE_FAULT(.L_read_words, .E_read_words)
-	_ASM_EXTABLE_FAULT(.L_read_trailing_bytes, .E_trailing_bytes)
+	_ASM_EXTABLE_TYPE(.L_read_leading_bytes, .E_leading_bytes, EX_TYPE_DEFAULT_MCE_SAFE)
+	_ASM_EXTABLE_TYPE(.L_read_words, .E_read_words, EX_TYPE_DEFAULT_MCE_SAFE)
+	_ASM_EXTABLE_TYPE(.L_read_trailing_bytes, .E_trailing_bytes, EX_TYPE_DEFAULT_MCE_SAFE)
 	_ASM_EXTABLE(.L_write_leading_bytes, .E_leading_bytes)
 	_ASM_EXTABLE(.L_write_words, .E_write_words)
 	_ASM_EXTABLE(.L_write_trailing_bytes, .E_trailing_bytes)
@@ -159,5 +149,5 @@ SYM_FUNC_END(copy_mc_enhanced_fast_string)
 
 	.previous
 
-	_ASM_EXTABLE_FAULT(.L_copy, .E_copy)
+	_ASM_EXTABLE_TYPE(.L_copy, .E_copy, EX_TYPE_DEFAULT_MCE_SAFE)
 #endif /* !CONFIG_UML */

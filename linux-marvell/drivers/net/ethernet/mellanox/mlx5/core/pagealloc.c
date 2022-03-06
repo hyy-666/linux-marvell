@@ -38,6 +38,7 @@
 #include <linux/xarray.h>
 #include "mlx5_core.h"
 #include "lib/eq.h"
+#include "lib/tout.h"
 
 enum {
 	MLX5_PAGES_CANT_GIVE	= 0,
@@ -61,12 +62,7 @@ struct fw_page {
 	u32			function;
 	unsigned long		bitmask;
 	struct list_head	list;
-	unsigned		free_count;
-};
-
-enum {
-	MAX_RECLAIM_TIME_MSECS	= 5000,
-	MAX_RECLAIM_VFS_PAGES_TIME_MSECS = 2 * 1000 * 60,
+	unsigned int free_count;
 };
 
 enum {
@@ -380,7 +376,7 @@ retry:
 	if (func_id)
 		dev->priv.vfs_pages += npages;
 	else if (mlx5_core_is_ecpf(dev) && !ec_function)
-		dev->priv.peer_pf_pages += npages;
+		dev->priv.host_pf_pages += npages;
 
 	mlx5_core_dbg(dev, "npages %d, ec_function %d, func_id 0x%x, err %d\n",
 		      npages, ec_function, func_id, err);
@@ -423,7 +419,7 @@ static void release_all_pages(struct mlx5_core_dev *dev, u16 func_id,
 	if (func_id)
 		dev->priv.vfs_pages -= npages;
 	else if (mlx5_core_is_ecpf(dev) && !ec_function)
-		dev->priv.peer_pf_pages -= npages;
+		dev->priv.host_pf_pages -= npages;
 
 	mlx5_core_dbg(dev, "npages %d, ec_function %d, func_id 0x%x\n",
 		      npages, ec_function, func_id);
@@ -533,7 +529,7 @@ static int reclaim_pages(struct mlx5_core_dev *dev, u16 func_id, int npages,
 	if (func_id)
 		dev->priv.vfs_pages -= num_claimed;
 	else if (mlx5_core_is_ecpf(dev) && !ec_function)
-		dev->priv.peer_pf_pages -= num_claimed;
+		dev->priv.host_pf_pages -= num_claimed;
 
 out_free:
 	kvfree(out);
@@ -641,7 +637,8 @@ static int optimal_reclaimed_pages(void)
 static int mlx5_reclaim_root_pages(struct mlx5_core_dev *dev,
 				   struct rb_root *root, u16 func_id)
 {
-	unsigned long end = jiffies + msecs_to_jiffies(MAX_RECLAIM_TIME_MSECS);
+	u64 recl_pages_to_jiffies = msecs_to_jiffies(mlx5_tout_ms(dev, RECLAIM_PAGES));
+	unsigned long end = jiffies + recl_pages_to_jiffies;
 
 	while (!RB_EMPTY_ROOT(root)) {
 		int nclaimed;
@@ -656,7 +653,7 @@ static int mlx5_reclaim_root_pages(struct mlx5_core_dev *dev,
 		}
 
 		if (nclaimed)
-			end = jiffies + msecs_to_jiffies(MAX_RECLAIM_TIME_MSECS);
+			end = jiffies + recl_pages_to_jiffies;
 
 		if (time_after(jiffies, end)) {
 			mlx5_core_warn(dev, "FW did not return all pages. giving up...\n");
@@ -688,9 +685,9 @@ int mlx5_reclaim_startup_pages(struct mlx5_core_dev *dev)
 	WARN(dev->priv.vfs_pages,
 	     "VFs FW pages counter is %d after reclaiming all pages\n",
 	     dev->priv.vfs_pages);
-	WARN(dev->priv.peer_pf_pages,
-	     "Peer PF FW pages counter is %d after reclaiming all pages\n",
-	     dev->priv.peer_pf_pages);
+	WARN(dev->priv.host_pf_pages,
+	     "External host PF FW pages counter is %d after reclaiming all pages\n",
+	     dev->priv.host_pf_pages);
 
 	return 0;
 }
@@ -727,7 +724,8 @@ void mlx5_pagealloc_stop(struct mlx5_core_dev *dev)
 
 int mlx5_wait_for_pages(struct mlx5_core_dev *dev, int *pages)
 {
-	unsigned long end = jiffies + msecs_to_jiffies(MAX_RECLAIM_VFS_PAGES_TIME_MSECS);
+	u64 recl_vf_pages_to_jiffies = msecs_to_jiffies(mlx5_tout_ms(dev, RECLAIM_VFS_PAGES));
+	unsigned long end = jiffies + recl_vf_pages_to_jiffies;
 	int prev_pages = *pages;
 
 	/* In case of internal error we will free the pages manually later */
@@ -743,7 +741,7 @@ int mlx5_wait_for_pages(struct mlx5_core_dev *dev, int *pages)
 			return -ETIMEDOUT;
 		}
 		if (*pages < prev_pages) {
-			end = jiffies + msecs_to_jiffies(MAX_RECLAIM_VFS_PAGES_TIME_MSECS);
+			end = jiffies + recl_vf_pages_to_jiffies;
 			prev_pages = *pages;
 		}
 		msleep(50);

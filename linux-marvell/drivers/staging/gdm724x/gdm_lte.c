@@ -687,7 +687,6 @@ static void gdm_lte_multi_sdu_pkt(struct phy_dev *phy_dev, char *buf, int len)
 	u32 nic_type;
 	int index;
 
-	hci_len = gdm_dev16_to_cpu(endian, multi_sdu->len);
 	num_packet = gdm_dev16_to_cpu(endian, multi_sdu->num_packet);
 
 	for (i = 0; i < num_packet; i++) {
@@ -868,6 +867,7 @@ int register_lte_device(struct phy_dev *phy_dev,
 	struct nic *nic;
 	struct net_device *net;
 	char pdn_dev_name[16];
+	u8 addr[ETH_ALEN];
 	int ret = 0;
 	u8 index;
 
@@ -894,11 +894,12 @@ int register_lte_device(struct phy_dev *phy_dev,
 		nic->phy_dev = phy_dev;
 		nic->nic_id = index;
 
-		form_mac_address(net->dev_addr,
+		form_mac_address(addr,
 				 nic->src_mac_addr,
 				 nic->dest_mac_addr,
 				 mac_address,
 				 index);
+		eth_hw_addr_set(net, addr);
 
 		SET_NETDEV_DEV(net, dev);
 		SET_NETDEV_DEVTYPE(net, &wwan_type);

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0+
-/**
+/*
  * APM X-Gene PCIe Driver
  *
  * Copyright (c) 2014 Applied Micro Circuits Corporation.
@@ -48,7 +48,6 @@
 #define EN_COHERENCY			0xF0000000
 #define EN_REG				0x00000001
 #define OB_LO_IO			0x00000002
-#define XGENE_PCIE_VENDORID		0x10E8
 #define XGENE_PCIE_DEVICEID		0xE004
 #define SZ_1T				(SZ_1G*1024ULL)
 #define PIPE_PHY_RATE_RD(src)		((0xc000 & (u32)(src)) >> 0xe)
@@ -173,12 +172,13 @@ static int xgene_pcie_config_read32(struct pci_bus *bus, unsigned int devfn,
 
 	/*
 	 * The v1 controller has a bug in its Configuration Request
-	 * Retry Status (CRS) logic: when CRS is enabled and we read the
-	 * Vendor and Device ID of a non-existent device, the controller
-	 * fabricates return data of 0xFFFF0001 ("device exists but is not
-	 * ready") instead of 0xFFFFFFFF ("device does not exist").  This
-	 * causes the PCI core to retry the read until it times out.
-	 * Avoid this by not claiming to support CRS.
+	 * Retry Status (CRS) logic: when CRS Software Visibility is
+	 * enabled and we read the Vendor and Device ID of a non-existent
+	 * device, the controller fabricates return data of 0xFFFF0001
+	 * ("device exists but is not ready") instead of 0xFFFFFFFF
+	 * ("device does not exist").  This causes the PCI core to retry
+	 * the read until it times out.  Avoid this by not claiming to
+	 * support CRS SV.
 	 */
 	if (pci_is_root_bus(bus) && (port->version == XGENE_PCIE_IP_VER_1) &&
 	    ((where & ~0x3) == XGENE_V1_PCI_EXP_CAP + PCI_EXP_RTCTL))
@@ -257,7 +257,6 @@ static int xgene_v1_pcie_ecam_init(struct pci_config_window *cfg)
 }
 
 const struct pci_ecam_ops xgene_v1_pcie_ecam_ops = {
-	.bus_shift	= 16,
 	.init		= xgene_v1_pcie_ecam_init,
 	.pci_ops	= {
 		.map_bus	= xgene_pcie_map_bus,
@@ -272,7 +271,6 @@ static int xgene_v2_pcie_ecam_init(struct pci_config_window *cfg)
 }
 
 const struct pci_ecam_ops xgene_v2_pcie_ecam_ops = {
-	.bus_shift	= 16,
 	.init		= xgene_v2_pcie_ecam_init,
 	.pci_ops	= {
 		.map_bus	= xgene_pcie_map_bus,
@@ -467,7 +465,7 @@ static int xgene_pcie_select_ib_reg(u8 *ib_reg_mask, u64 size)
 		return 1;
 	}
 
-	if ((size > SZ_1K) && (size < SZ_1T) && !(*ib_reg_mask & (1 << 0))) {
+	if ((size > SZ_1K) && (size < SZ_4G) && !(*ib_reg_mask & (1 << 0))) {
 		*ib_reg_mask |= (1 << 0);
 		return 0;
 	}
@@ -486,7 +484,7 @@ static void xgene_pcie_setup_ib_reg(struct xgene_pcie_port *port,
 {
 	void __iomem *cfg_base = port->cfg_base;
 	struct device *dev = port->dev;
-	void *bar_addr;
+	void __iomem *bar_addr;
 	u32 pim_reg;
 	u64 cpu_addr = entry->res->start;
 	u64 pci_addr = cpu_addr - entry->offset;
@@ -561,7 +559,7 @@ static int xgene_pcie_setup(struct xgene_pcie_port *port)
 	xgene_pcie_clear_config(port);
 
 	/* setup the vendor and device IDs correctly */
-	val = (XGENE_PCIE_DEVICEID << 16) | XGENE_PCIE_VENDORID;
+	val = (XGENE_PCIE_DEVICEID << 16) | PCI_VENDOR_ID_AMCC;
 	xgene_pcie_writel(port, BRIDGE_CFG_0, val);
 
 	ret = xgene_pcie_map_ranges(port);

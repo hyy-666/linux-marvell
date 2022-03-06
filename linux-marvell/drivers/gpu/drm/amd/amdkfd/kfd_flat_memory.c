@@ -308,7 +308,7 @@
  * 16MB are reserved for kernel use (CWSR trap handler and kernel IB
  * for now).
  */
-#define SVM_USER_BASE 0x1000000ull
+#define SVM_USER_BASE (u64)(KFD_CWSR_TBA_TMA_SIZE + 2*PAGE_SIZE)
 #define SVM_CWSR_BASE (SVM_USER_BASE - KFD_CWSR_TBA_TMA_SIZE)
 #define SVM_IB_BASE   (SVM_CWSR_BASE - PAGE_SIZE)
 
@@ -412,11 +412,17 @@ int kfd_init_apertures(struct kfd_process *process)
 			case CHIP_RAVEN:
 			case CHIP_RENOIR:
 			case CHIP_ARCTURUS:
+			case CHIP_ALDEBARAN:
 			case CHIP_NAVI10:
 			case CHIP_NAVI12:
 			case CHIP_NAVI14:
 			case CHIP_SIENNA_CICHLID:
 			case CHIP_NAVY_FLOUNDER:
+			case CHIP_VANGOGH:
+			case CHIP_DIMGREY_CAVEFISH:
+			case CHIP_BEIGE_GOBY:
+			case CHIP_YELLOW_CARP:
+			case CHIP_CYAN_SKILLFISH:
 				kfd_init_apertures_v9(pdd, id);
 				break;
 			default:

@@ -9,6 +9,7 @@
 #include <linux/dma-buf.h>
 #include <linux/pfn_t.h>
 #include <linux/shmem_fs.h>
+#include <linux/module.h>
 
 #include <drm/drm_prime.h>
 #include <drm/drm_vma_manager.h>
@@ -16,6 +17,8 @@
 
 #include "exynos_drm_drv.h"
 #include "exynos_drm_gem.h"
+
+MODULE_IMPORT_NS(DMA_BUF);
 
 static int exynos_drm_alloc_buf(struct exynos_drm_gem *exynos_gem, bool kvmap)
 {
@@ -127,6 +130,17 @@ void exynos_drm_gem_destroy(struct exynos_drm_gem *exynos_gem)
 	kfree(exynos_gem);
 }
 
+static const struct vm_operations_struct exynos_drm_gem_vm_ops = {
+	.open = drm_gem_vm_open,
+	.close = drm_gem_vm_close,
+};
+
+static const struct drm_gem_object_funcs exynos_drm_gem_object_funcs = {
+	.free = exynos_drm_gem_free_object,
+	.get_sg_table = exynos_drm_gem_prime_get_sg_table,
+	.vm_ops = &exynos_drm_gem_vm_ops,
+};
+
 static struct exynos_drm_gem *exynos_drm_gem_init(struct drm_device *dev,
 						  unsigned long size)
 {
@@ -140,6 +154,8 @@ static struct exynos_drm_gem *exynos_drm_gem_init(struct drm_device *dev,
 
 	exynos_gem->size = size;
 	obj = &exynos_gem->base;
+
+	obj->funcs = &exynos_drm_gem_object_funcs;
 
 	ret = drm_gem_object_init(dev, obj, size);
 	if (ret < 0) {
@@ -452,16 +468,6 @@ exynos_drm_gem_prime_import_sg_table(struct drm_device *dev,
 	exynos_gem->dma_addr = sg_dma_address(sgt->sgl);
 	exynos_gem->sgt = sgt;
 	return &exynos_gem->base;
-}
-
-void *exynos_drm_gem_prime_vmap(struct drm_gem_object *obj)
-{
-	return NULL;
-}
-
-void exynos_drm_gem_prime_vunmap(struct drm_gem_object *obj, void *vaddr)
-{
-	/* Nothing to do */
 }
 
 int exynos_drm_gem_prime_mmap(struct drm_gem_object *obj,

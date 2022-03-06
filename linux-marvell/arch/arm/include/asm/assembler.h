@@ -199,14 +199,43 @@
 	.endm
 	.endr
 
+	.macro	get_current, rd
+#ifdef CONFIG_CURRENT_POINTER_IN_TPIDRURO
+	mrc	p15, 0, \rd, c13, c0, 3		@ get TPIDRURO register
+#else
+	get_thread_info \rd
+	ldr	\rd, [\rd, #TI_TASK]
+#endif
+	.endm
+
+	.macro	set_current, rn
+#ifdef CONFIG_CURRENT_POINTER_IN_TPIDRURO
+	mcr	p15, 0, \rn, c13, c0, 3		@ set TPIDRURO register
+#endif
+	.endm
+
+	.macro	reload_current, t1:req, t2:req
+#ifdef CONFIG_CURRENT_POINTER_IN_TPIDRURO
+	adr_l	\t1, __entry_task		@ get __entry_task base address
+	mrc	p15, 0, \t2, c13, c0, 4		@ get per-CPU offset
+	ldr	\t1, [\t1, \t2]			@ load variable
+	mcr	p15, 0, \t1, c13, c0, 3		@ store in TPIDRURO
+#endif
+	.endm
+
 /*
  * Get current thread_info.
  */
 	.macro	get_thread_info, rd
+#ifdef CONFIG_THREAD_INFO_IN_TASK
+	/* thread_info is the first member of struct task_struct */
+	get_current \rd
+#else
  ARM(	mov	\rd, sp, lsr #THREAD_SIZE_ORDER + PAGE_SHIFT	)
  THUMB(	mov	\rd, sp			)
  THUMB(	lsr	\rd, \rd, #THREAD_SIZE_ORDER + PAGE_SHIFT	)
 	mov	\rd, \rd, lsl #THREAD_SIZE_ORDER + PAGE_SHIFT
+#endif
 	.endm
 
 /*
@@ -259,7 +288,8 @@
  */
 #define ALT_UP(instr...)					\
 	.pushsection ".alt.smp.init", "a"			;\
-	.long	9998b						;\
+	.align	2						;\
+	.long	9998b - .					;\
 9997:	instr							;\
 	.if . - 9997b == 2					;\
 		nop						;\
@@ -270,7 +300,8 @@
 	.popsection
 #define ALT_UP_B(label)					\
 	.pushsection ".alt.smp.init", "a"			;\
-	.long	9998b						;\
+	.align	2						;\
+	.long	9998b - .					;\
 	W(b)	. + (label - 9998b)					;\
 	.popsection
 #else
@@ -576,6 +607,23 @@ THUMB(	orr	\reg , \reg , #PSR_T_BIT	)
 	 */
 	.macro		str_l, src:req, sym:req, tmp:req, cond
 	__adldst_l	str, \src, \sym, \tmp, \cond
+	.endm
+
+	/*
+	 * rev_l - byte-swap a 32-bit value
+	 *
+	 * @val: source/destination register
+	 * @tmp: scratch register
+	 */
+	.macro		rev_l, val:req, tmp:req
+	.if		__LINUX_ARM_ARCH__ < 6
+	eor		\tmp, \val, \val, ror #16
+	bic		\tmp, \tmp, #0x00ff0000
+	mov		\val, \val, ror #8
+	eor		\val, \val, \tmp, lsr #8
+	.else
+	rev		\val, \val
+	.endif
 	.endm
 
 #endif /* __ASM_ASSEMBLER_H__ */

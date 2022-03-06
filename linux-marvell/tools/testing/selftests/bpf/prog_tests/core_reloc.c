@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <test_progs.h>
 #include "progs/core_reloc_types.h"
+#include "bpf_testmod/bpf_testmod.h"
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <bpf/btf.h>
@@ -8,6 +9,30 @@
 static int duration = 0;
 
 #define STRUCT_TO_CHAR_PTR(struct_name) (const char *)&(struct struct_name)
+
+#define MODULES_CASE(name, sec_name, tp_name) {				\
+	.case_name = name,						\
+	.bpf_obj_file = "test_core_reloc_module.o",			\
+	.btf_src_file = NULL, /* find in kernel module BTFs */		\
+	.input = "",							\
+	.input_len = 0,							\
+	.output = STRUCT_TO_CHAR_PTR(core_reloc_module_output) {	\
+		.read_ctx_sz = sizeof(struct bpf_testmod_test_read_ctx),\
+		.read_ctx_exists = true,				\
+		.buf_exists = true,					\
+		.len_exists = true,					\
+		.off_exists = true,					\
+		.len = 123,						\
+		.off = 0,						\
+		.comm = "test_progs",					\
+		.comm_len = sizeof("test_progs"),			\
+	},								\
+	.output_len = sizeof(struct core_reloc_module_output),		\
+	.prog_sec_name = sec_name,					\
+	.raw_tp_name = tp_name,						\
+	.trigger = __trigger_module_test_read,				\
+	.needs_testmod = true,						\
+}
 
 #define FLAVORS_DATA(struct_name) STRUCT_TO_CHAR_PTR(struct_name) {	\
 	.a = 42,							\
@@ -206,7 +231,7 @@ static int duration = 0;
 	.output = STRUCT_TO_CHAR_PTR(core_reloc_bitfields_output)	\
 		__VA_ARGS__,						\
 	.output_len = sizeof(struct core_reloc_bitfields_output),	\
-	.direct_raw_tp = true,						\
+	.prog_sec_name = "tp_btf/sys_enter",				\
 }
 
 
@@ -217,15 +242,14 @@ static int duration = 0;
 }, {									\
 	BITFIELDS_CASE_COMMON("test_core_reloc_bitfields_direct.o",	\
 			      "direct:", name),				\
-	.direct_raw_tp = true,						\
+	.prog_sec_name = "tp_btf/sys_enter",				\
 	.fails = true,							\
 }
 
 #define SIZE_CASE_COMMON(name)						\
 	.case_name = #name,						\
 	.bpf_obj_file = "test_core_reloc_size.o",			\
-	.btf_src_file = "btf__core_reloc_" #name ".o",			\
-	.relaxed_core_relocs = true
+	.btf_src_file = "btf__core_reloc_" #name ".o"
 
 #define SIZE_OUTPUT_DATA(type)						\
 	STRUCT_TO_CHAR_PTR(core_reloc_size_output) {			\
@@ -236,6 +260,7 @@ static int duration = 0;
 		.arr_elem_sz = sizeof(((type *)0)->arr_field[0]),	\
 		.ptr_sz = 8, /* always 8-byte pointer for BPF */	\
 		.enum_sz = sizeof(((type *)0)->enum_field),		\
+		.float_sz = sizeof(((type *)0)->float_field),		\
 	}
 
 #define SIZE_CASE(name) {						\
@@ -304,6 +329,7 @@ static int duration = 0;
 struct core_reloc_test_case;
 
 typedef int (*setup_test_fn)(struct core_reloc_test_case *test);
+typedef int (*trigger_test_fn)(const struct core_reloc_test_case *test);
 
 struct core_reloc_test_case {
 	const char *case_name;
@@ -314,9 +340,12 @@ struct core_reloc_test_case {
 	const char *output;
 	int output_len;
 	bool fails;
+	bool needs_testmod;
 	bool relaxed_core_relocs;
-	bool direct_raw_tp;
+	const char *prog_sec_name;
+	const char *raw_tp_name;
 	setup_test_fn setup;
+	trigger_test_fn trigger;
 };
 
 static int find_btf_type(const struct btf *btf, const char *name, __u32 kind)
@@ -339,8 +368,7 @@ static int setup_type_id_case_local(struct core_reloc_test_case *test)
 	const char *name;
 	int i;
 
-	if (CHECK(IS_ERR(local_btf), "local_btf", "failed: %ld\n", PTR_ERR(local_btf)) ||
-	    CHECK(IS_ERR(targ_btf), "targ_btf", "failed: %ld\n", PTR_ERR(targ_btf))) {
+	if (!ASSERT_OK_PTR(local_btf, "local_btf") || !ASSERT_OK_PTR(targ_btf, "targ_btf")) {
 		btf__free(local_btf);
 		btf__free(targ_btf);
 		return -EINVAL;
@@ -353,7 +381,7 @@ static int setup_type_id_case_local(struct core_reloc_test_case *test)
 	exp->local_anon_void_ptr = -1;
 	exp->local_anon_arr = -1;
 
-	for (i = 1; i <= btf__get_nr_types(local_btf); i++)
+	for (i = 1; i < btf__type_cnt(local_btf); i++)
 	{
 		t = btf__type_by_id(local_btf, i);
 		/* we are interested only in anonymous types */
@@ -446,6 +474,15 @@ static int setup_type_id_case_failure(struct core_reloc_test_case *test)
 	return 0;
 }
 
+static int __trigger_module_test_read(const struct core_reloc_test_case *test)
+{
+	struct core_reloc_module_output *exp = (void *)test->output;
+
+	trigger_module_test_read(exp->len);
+	return 0;
+}
+
+
 static struct core_reloc_test_case test_cases[] = {
 	/* validate we can find kernel image and use its BTF for relocs */
 	{
@@ -461,6 +498,10 @@ static struct core_reloc_test_case test_cases[] = {
 		},
 		.output_len = sizeof(struct core_reloc_kernel_output),
 	},
+
+	/* validate we can find kernel module BTF types for relocs/attach */
+	MODULES_CASE("module_probed", "raw_tp/bpf_testmod_test_read", "bpf_testmod_test_read"),
+	MODULES_CASE("module_direct", "tp_btf/bpf_testmod_test_read", NULL),
 
 	/* validate BPF program can use multiple flavors to match against
 	 * single target BTF type
@@ -766,7 +807,7 @@ static size_t roundup_page(size_t sz)
 void test_core_reloc(void)
 {
 	const size_t mmap_sz = roundup_page(sizeof(struct data));
-	struct bpf_object_load_attr load_attr = {};
+	DECLARE_LIBBPF_OPTS(bpf_object_open_opts, open_opts);
 	struct core_reloc_test_case *test_case;
 	const char *tp_name, *probe_name;
 	int err, i, equal;
@@ -785,31 +826,16 @@ void test_core_reloc(void)
 		if (!test__start_subtest(test_case->case_name))
 			continue;
 
+		if (test_case->needs_testmod && !env.has_testmod) {
+			test__skip();
+			continue;
+		}
+
 		if (test_case->setup) {
 			err = test_case->setup(test_case);
 			if (CHECK(err, "test_setup", "test #%d setup failed: %d\n", i, err))
 				continue;
 		}
-
-		obj = bpf_object__open_file(test_case->bpf_obj_file, NULL);
-		if (CHECK(IS_ERR(obj), "obj_open", "failed to open '%s': %ld\n",
-			  test_case->bpf_obj_file, PTR_ERR(obj)))
-			continue;
-
-		/* for typed raw tracepoints, NULL should be specified */
-		if (test_case->direct_raw_tp) {
-			probe_name = "tp_btf/sys_enter";
-			tp_name = NULL;
-		} else {
-			probe_name = "raw_tracepoint/sys_enter";
-			tp_name = "sys_enter";
-		}
-
-		prog = bpf_object__find_program_by_title(obj, probe_name);
-		if (CHECK(!prog, "find_probe",
-			  "prog '%s' not found\n", probe_name))
-			goto cleanup;
-
 
 		if (test_case->btf_src_file) {
 			err = access(test_case->btf_src_file, R_OK);
@@ -817,17 +843,31 @@ void test_core_reloc(void)
 				goto cleanup;
 		}
 
-		load_attr.obj = obj;
-		load_attr.log_level = 0;
-		load_attr.target_btf_path = test_case->btf_src_file;
-		err = bpf_object__load_xattr(&load_attr);
+		open_opts.btf_custom_path = test_case->btf_src_file;
+		obj = bpf_object__open_file(test_case->bpf_obj_file, &open_opts);
+		if (!ASSERT_OK_PTR(obj, "obj_open"))
+			goto cleanup;
+
+		probe_name = "raw_tracepoint/sys_enter";
+		tp_name = "sys_enter";
+		if (test_case->prog_sec_name) {
+			probe_name = test_case->prog_sec_name;
+			tp_name = test_case->raw_tp_name; /* NULL for tp_btf */
+		}
+
+		prog = bpf_object__find_program_by_title(obj, probe_name);
+		if (CHECK(!prog, "find_probe",
+			  "prog '%s' not found\n", probe_name))
+			goto cleanup;
+
+		err = bpf_object__load(obj);
 		if (err) {
 			if (!test_case->fails)
 				ASSERT_OK(err, "obj_load");
 			goto cleanup;
 		}
 
-		data_map = bpf_object__find_map_by_name(obj, "test_cor.bss");
+		data_map = bpf_object__find_map_by_name(obj, ".bss");
 		if (CHECK(!data_map, "find_data_map", "data map not found\n"))
 			goto cleanup;
 
@@ -845,12 +885,16 @@ void test_core_reloc(void)
 		data->my_pid_tgid = my_pid_tgid;
 
 		link = bpf_program__attach_raw_tracepoint(prog, tp_name);
-		if (CHECK(IS_ERR(link), "attach_raw_tp", "err %ld\n",
-			  PTR_ERR(link)))
+		if (!ASSERT_OK_PTR(link, "attach_raw_tp"))
 			goto cleanup;
 
 		/* trigger test run */
-		usleep(1);
+		if (test_case->trigger) {
+			if (!ASSERT_OK(test_case->trigger(test_case), "test_trigger"))
+				goto cleanup;
+		} else {
+			usleep(1);
+		}
 
 		if (data->skip) {
 			test__skip();
@@ -882,10 +926,8 @@ cleanup:
 			CHECK_FAIL(munmap(mmap_data, mmap_sz));
 			mmap_data = NULL;
 		}
-		if (!IS_ERR_OR_NULL(link)) {
-			bpf_link__destroy(link);
-			link = NULL;
-		}
+		bpf_link__destroy(link);
+		link = NULL;
 		bpf_object__close(obj);
 	}
 }

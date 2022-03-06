@@ -514,13 +514,15 @@ void dce_aud_az_configure(
 			union audio_sample_rates sample_rates =
 					audio_mode->sample_rates;
 			uint8_t byte2 = audio_mode->max_bit_rate;
+			uint8_t channel_count = audio_mode->channel_count;
 
 			/* adjust specific properties */
 			switch (audio_format_code) {
 			case AUDIO_FORMAT_CODE_LINEARPCM: {
+
 				check_audio_bandwidth(
 					crtc_info,
-					audio_mode->channel_count,
+					channel_count,
 					signal,
 					&sample_rates);
 
@@ -548,7 +550,7 @@ void dce_aud_az_configure(
 
 			/* fill audio format data */
 			set_reg_field_value(value,
-					audio_mode->channel_count - 1,
+					channel_count - 1,
 					AZALIA_F0_CODEC_PIN_CONTROL_AUDIO_DESCRIPTOR0,
 					MAX_CHANNELS);
 
@@ -868,7 +870,7 @@ void dce_aud_wall_dto_setup(
 }
 
 #if defined(CONFIG_DRM_AMD_DC_SI)
-void dce60_aud_wall_dto_setup(
+static void dce60_aud_wall_dto_setup(
 	struct audio *audio,
 	enum signal_type signal,
 	const struct audio_crtc_info *crtc_info,
